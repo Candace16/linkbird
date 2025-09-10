@@ -1,0 +1,226 @@
+# API Documentation
+
+## Authentication Endpoints
+
+### POST /api/auth/sign-in
+Sign in with email and password.
+
+**Request Body:**
+\`\`\`json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+\`\`\`
+
+**Response:**
+\`\`\`json
+{
+  "user": {
+    "id": "user-id",
+    "email": "user@example.com",
+    "name": "User Name"
+  },
+  "session": {
+    "token": "session-token",
+    "expiresAt": "2024-01-01T00:00:00Z"
+  }
+}
+\`\`\`
+
+### POST /api/auth/sign-up
+Create a new user account.
+
+**Request Body:**
+\`\`\`json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "name": "User Name"
+}
+\`\`\`
+
+### GET /api/auth/session
+Get current user session.
+
+**Response:**
+\`\`\`json
+{
+  "user": {
+    "id": "user-id",
+    "email": "user@example.com",
+    "name": "User Name"
+  }
+}
+\`\`\`
+
+### POST /api/auth/sign-out
+Sign out current user.
+
+## Campaign Endpoints
+
+### GET /api/campaigns
+Get user's campaigns with optional filtering.
+
+**Query Parameters:**
+- `status` - Filter by campaign status
+- `limit` - Number of results (default: 10)
+- `offset` - Pagination offset
+
+**Response:**
+\`\`\`json
+{
+  "campaigns": [
+    {
+      "id": "campaign-id",
+      "name": "Campaign Name",
+      "status": "active",
+      "totalLeads": 100,
+      "successfulLeads": 25,
+      "responseRate": 0.25,
+      "progress": 50,
+      "createdAt": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "total": 5
+}
+\`\`\`
+
+### POST /api/campaigns
+Create a new campaign.
+
+**Request Body:**
+\`\`\`json
+{
+  "name": "New Campaign",
+  "description": "Campaign description",
+  "settings": {
+    "dailyLimit": 50,
+    "autoPilot": true
+  }
+}
+\`\`\`
+
+### PUT /api/campaigns/[id]
+Update campaign details.
+
+### DELETE /api/campaigns/[id]
+Delete a campaign.
+
+### POST /api/campaigns/[id]/pause
+Pause a campaign.
+
+### POST /api/campaigns/[id]/resume
+Resume a paused campaign.
+
+## Lead Endpoints
+
+### GET /api/leads
+Get leads with filtering and pagination.
+
+**Query Parameters:**
+- `campaignId` - Filter by campaign
+- `status` - Filter by lead status
+- `search` - Search by name or company
+- `limit` - Results per page
+- `cursor` - Pagination cursor
+
+**Response:**
+\`\`\`json
+{
+  "leads": [
+    {
+      "id": "lead-id",
+      "name": "Lead Name",
+      "email": "lead@company.com",
+      "company": "Company Name",
+      "jobTitle": "Job Title",
+      "status": "pending",
+      "linkedinUrl": "https://linkedin.com/in/lead",
+      "lastContactedAt": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "nextCursor": "cursor-string",
+  "hasMore": true
+}
+\`\`\`
+
+### POST /api/leads
+Create a new lead.
+
+**Request Body:**
+\`\`\`json
+{
+  "name": "Lead Name",
+  "email": "lead@company.com",
+  "company": "Company Name",
+  "jobTitle": "Job Title",
+  "linkedinUrl": "https://linkedin.com/in/lead",
+  "campaignId": "campaign-id"
+}
+\`\`\`
+
+### PUT /api/leads/[id]
+Update lead information.
+
+### DELETE /api/leads/[id]
+Delete a lead.
+
+### POST /api/leads/[id]/contact
+Record a contact interaction.
+
+**Request Body:**
+\`\`\`json
+{
+  "type": "message",
+  "message": "Hello, I'd like to connect...",
+  "platform": "linkedin"
+}
+\`\`\`
+
+## LinkedIn Account Endpoints
+
+### GET /api/linkedin-accounts
+Get user's LinkedIn accounts.
+
+### POST /api/linkedin-accounts
+Add a new LinkedIn account.
+
+### PUT /api/linkedin-accounts/[id]
+Update LinkedIn account settings.
+
+### DELETE /api/linkedin-accounts/[id]
+Remove LinkedIn account.
+
+## Error Responses
+
+All endpoints return consistent error responses:
+
+\`\`\`json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human readable error message",
+    "details": {}
+  }
+}
+\`\`\`
+
+### Common Error Codes
+- `UNAUTHORIZED` - Authentication required
+- `FORBIDDEN` - Insufficient permissions
+- `NOT_FOUND` - Resource not found
+- `VALIDATION_ERROR` - Invalid request data
+- `RATE_LIMITED` - Too many requests
+
+## Rate Limiting
+
+API endpoints are rate limited:
+- Authentication: 5 requests per minute
+- General API: 100 requests per minute
+- Bulk operations: 10 requests per minute
+
+Rate limit headers are included in responses:
+- `X-RateLimit-Limit` - Request limit
+- `X-RateLimit-Remaining` - Remaining requests
+- `X-RateLimit-Reset` - Reset timestamp
