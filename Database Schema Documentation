@@ -1,0 +1,304 @@
+# Database Schema Documentation
+
+## Overview
+
+LinkBird uses PostgreSQL with Drizzle ORM for type-safe database operations. The schema is designed to support LinkedIn automation, campaign management, and lead tracking.
+
+## Tables
+
+### users
+Managed by Better Auth for authentication.
+
+\`\`\`sql
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    email TEXT UNIQUE NOT NULL,
+    emailVerified TIMESTAMP,
+    image TEXT,
+    createdAt TIMESTAMP DEFAULT NOW(),
+    updatedAt TIMESTAMP DEFAULT NOW()
+);
+\`\`\`
+
+**Indexes:**
+- `users_email_idx` on `email`
+
+### campaigns
+Core campaign management table.
+
+\`\`\`sql
+CREATE TABLE campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Metrics
+    totalLeads INTEGER DEFAULT 0,
+    successfulLeads INTEGER DEFAULT 0,
+    responseRate DECIMAL(5,4) DEFAULT 0,
+    conversionRate DECIMAL(5,4) DEFAULT 0,
+    progress INTEGER DEFAULT 0,
+    
+    -- Configuration
+    autoPilotEnabled BOOLEAN DEFAULT false,
+    dailyLimit INTEGER DEFAULT 50,
+    
+    -- Dates
+    startDate TIMESTAMP,
+    endDate TIMESTAMP,
+    createdAt TIMESTAMP DEFAULT NOW(),
+    updatedAt TIMESTAMP DEFAULT NOW()
+);
+\`\`\`
+
+**Status Values:**
+- `draft` - Campaign being created
+- `active` - Currently running
+- `paused` - Temporarily stopped
+- `completed` - Finished successfully
+- `cancelled` - Stopped permanently
+
+**Indexes:**
+- `campaigns_userId_idx` on `userId`
+- `campaigns_status_idx` on `status`
+
+### leads
+Individual lead records with contact information.
+
+\`\`\`sql
+CREATE TABLE leads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    email TEXT,
+    company TEXT,
+    jobTitle TEXT,
+    linkedinUrl TEXT,
+    avatar TEXT,
+    
+    -- Relationships
+    campaignId UUID REFERENCES campaigns(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Status and Activity
+    status TEXT NOT NULL DEFAULT 'pending',
+    activity TEXT DEFAULT 'low',
+    
+    -- Contact Tracking
+    lastContactedAt TIMESTAMP,
+    lastResponseAt TIMESTAMP,
+    contactAttempts INTEGER DEFAULT 0,
+    
+    -- Metadata
+    source TEXT,
+    notes TEXT,
+    tags TEXT[],
+    
+    createdAt TIMESTAMP DEFAULT NOW(),
+    updatedAt TIMESTAMP DEFAULT NOW()
+);
+\`\`\`
+
+**Status Values:**
+- `pending` - Not yet contacted
+- `contacted` - Initial contact made
+- `responded` - Lead has responded
+- `converted` - Successfully converted
+- `rejected` - Lead declined/uninterested
+
+**Activity Levels:**
+- `low` - Minimal LinkedIn activity
+- `medium` - Regular activity
+- `high` - Very active user
+
+**Indexes:**
+- `leads_campaignId_idx` on `campaignId`
+- `leads_userId_idx` on `userId`
+- `leads_status_idx` on `status`
+- `leads_email_idx` on `email`
+
+### lead_interactions
+Track all interactions with leads.
+
+\`\`\`sql
+CREATE TABLE lead_interactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    leadId UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    
+    -- Interaction Details
+    type TEXT NOT NULL,
+    message TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    
+    -- Platform Information
+    platform TEXT DEFAULT 'linkedin',
+    platformMessageId TEXT,
+    
+    -- Timing
+    scheduledAt TIMESTAMP,
+    sentAt TIMESTAMP,
+    deliveredAt TIMESTAMP,
+    readAt TIMESTAMP,
+    respondedAt TIMESTAMP,
+    
+    createdAt TIMESTAMP DEFAULT NOW(),
+    updatedAt TIMESTAMP DEFAULT NOW()
+);
+\`\`\`
+
+**Interaction Types:**
+- `invitation` - Connection request
+- `message` - Direct message
+- `follow_up` - Follow-up message
+- `connection` - Connection accepted
+- `email` - Email outreach
+
+**Status Values:**
+- `pending` - Scheduled but not sent
+- `sent` - Successfully sent
+- `delivered` - Confirmed delivery
+- `read` - Message was read
+- `responded` - Lead responded
+- `failed` - Failed to send
+
+**Indexes:**
+- `lead_interactions_leadId_idx` on `leadId`
+- `lead_interactions_type_idx` on `type`
+- `lead_interactions_status_idx` on `status`
+
+### linkedin_accounts
+Manage multiple LinkedIn accounts for automation.
+
+\`\`\`sql
+CREATE TABLE linkedin_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Account Information
+    linkedinId TEXT UNIQUE,
+    email TEXT NOT NULL,
+    name TEXT NOT NULL,
+    profileUrl TEXT,
+    avatar TEXT,
+    
+    -- Status and Limits
+    status TEXT NOT NULL DEFAULT 'active',
+    dailyConnectionLimit INTEGER DEFAULT 20,
+    dailyMessageLimit INTEGER DEFAULT 50,
+    
+    -- Usage Tracking
+    connectionsToday INTEGER DEFAULT 0,
+    messagesToday INTEGER DEFAULT 0,
+    lastActivityAt TIMESTAMP,
+    lastResetAt TIMESTAMP DEFAULT NOW(),
+    
+    -- Account Health
+    warningCount INTEGER DEFAULT 0,
+    restrictedUntil TIMESTAMP,
+    
+    createdAt TIMESTAMP DEFAULT NOW(),
+    updatedAt TIMESTAMP DEFAULT NOW()
+);
+\`\`\`
+
+**Status Values:**
+- `active` - Account is operational
+- `paused` - Temporarily disabled
+- `restricted` - LinkedIn restrictions applied
+- `banned` - Account banned/suspended
+
+**Indexes:**
+- `linkedin_accounts_userId_idx` on `userId`
+- `linkedin_accounts_status_idx` on `status`
+- `linkedin_accounts_linkedinId_idx` on `linkedinId`
+
+## Relationships
+
+\`\`\`
+users (1) ──── (many) campaigns
+users (1) ──── (many) leads
+users (1) ──── (many) linkedin_accounts
+
+campaigns (1) ──── (many) leads
+leads (1) ──── (many) lead_interactions
+\`\`\`
+
+## Views
+
+### campaign_stats
+Aggregated campaign statistics.
+
+\`\`\`sql
+CREATE VIEW campaign_stats AS
+SELECT 
+    c.id,
+    c.name,
+    c.status,
+    COUNT(l.id) as total_leads,
+    COUNT(CASE WHEN l.status = 'converted' THEN 1 END) as converted_leads,
+    COUNT(CASE WHEN l.status = 'responded' THEN 1 END) as responded_leads,
+    ROUND(
+        COUNT(CASE WHEN l.status = 'responded' THEN 1 END)::decimal / 
+        NULLIF(COUNT(l.id), 0) * 100, 2
+    ) as response_rate
+FROM campaigns c
+LEFT JOIN leads l ON c.id = l.campaignId
+GROUP BY c.id, c.name, c.status;
+\`\`\`
+
+## Triggers
+
+### update_campaign_metrics
+Automatically update campaign metrics when leads change.
+
+\`\`\`sql
+CREATE OR REPLACE FUNCTION update_campaign_metrics()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE campaigns SET
+        totalLeads = (
+            SELECT COUNT(*) FROM leads WHERE campaignId = NEW.campaignId
+        ),
+        successfulLeads = (
+            SELECT COUNT(*) FROM leads 
+            WHERE campaignId = NEW.campaignId AND status = 'converted'
+        ),
+        responseRate = (
+            SELECT COALESCE(
+                COUNT(CASE WHEN status IN ('responded', 'converted') THEN 1 END)::decimal / 
+                NULLIF(COUNT(*), 0), 0
+            ) FROM leads WHERE campaignId = NEW.campaignId
+        ),
+        updatedAt = NOW()
+    WHERE id = NEW.campaignId;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_campaign_metrics
+    AFTER INSERT OR UPDATE OR DELETE ON leads
+    FOR EACH ROW EXECUTE FUNCTION update_campaign_metrics();
+\`\`\`
+
+## Indexes for Performance
+
+\`\`\`sql
+-- Composite indexes for common queries
+CREATE INDEX leads_campaign_status_idx ON leads(campaignId, status);
+CREATE INDEX leads_user_status_idx ON leads(userId, status);
+CREATE INDEX interactions_lead_type_idx ON lead_interactions(leadId, type);
+
+-- Full-text search indexes
+CREATE INDEX leads_search_idx ON leads USING gin(
+    to_tsvector('english', name || ' ' || COALESCE(company, '') || ' ' || COALESCE(jobTitle, ''))
+);
+\`\`\`
+
+## Data Retention
+
+- Lead interactions older than 2 years are archived
+- Deleted campaigns are soft-deleted and purged after 30 days
+- User data is permanently deleted upon account deletion
