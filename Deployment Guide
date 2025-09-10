@@ -1,0 +1,406 @@
+# Deployment Guide
+
+## Overview
+
+This guide covers deploying LinkBird to various platforms including Vercel, AWS, and self-hosted environments.
+
+## Prerequisites
+
+- Node.js 18+
+- PostgreSQL database
+- Google OAuth credentials
+- Domain name (for production)
+
+## Environment Variables
+
+### Required Variables
+\`\`\`env
+# Database
+DATABASE_URL=postgresql://user:password@host:port/database
+
+# Authentication
+BETTER_AUTH_SECRET=your-32-character-secret-key
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# Application
+NEXT_PUBLIC_APP_URL=https://yourdomain.com
+NODE_ENV=production
+\`\`\`
+
+### Optional Variables
+\`\`\`env
+# Analytics
+NEXT_PUBLIC_GA_ID=your-google-analytics-id
+
+# Error Tracking
+SENTRY_DSN=your-sentry-dsn
+
+# Email (if using email features)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+\`\`\`
+
+## Vercel Deployment (Recommended)
+
+### 1. Prepare Repository
+\`\`\`bash
+# Ensure your code is in a Git repository
+git add .
+git commit -m "Prepare for deployment"
+git push origin main
+\`\`\`
+
+### 2. Database Setup
+Set up a PostgreSQL database using one of these options:
+
+**Option A: Vercel Postgres**
+\`\`\`bash
+# Install Vercel CLI
+npm i -g vercel
+
+# Login and link project
+vercel login
+vercel link
+
+# Create database
+vercel postgres create
+\`\`\`
+
+**Option B: External Database (Supabase, PlanetScale, etc.)**
+1. Create database instance
+2. Note connection string
+3. Run migration scripts
+
+### 3. Deploy to Vercel
+\`\`\`bash
+# Deploy via CLI
+vercel --prod
+
+# Or connect GitHub repository at vercel.com
+\`\`\`
+
+### 4. Configure Environment Variables
+In Vercel dashboard:
+1. Go to Project Settings → Environment Variables
+2. Add all required variables
+3. Redeploy if needed
+
+### 5. Run Database Migrations
+\`\`\`bash
+# Connect to production database and run:
+psql $DATABASE_URL -f scripts/001-create-tables.sql
+psql $DATABASE_URL -f scripts/002-seed-data.sql
+\`\`\`
+
+## AWS Deployment
+
+### Using AWS Amplify
+
+1. **Connect Repository**
+   - Go to AWS Amplify Console
+   - Connect your GitHub repository
+   - Select main branch
+
+2. **Build Settings**
+   \`\`\`yaml
+   version: 1
+   frontend:
+     phases:
+       preBuild:
+         commands:
+           - npm ci
+       build:
+         commands:
+           - npm run build
+     artifacts:
+       baseDirectory: .next
+       files:
+         - '**/*'
+     cache:
+       paths:
+         - node_modules/**/*
+   \`\`\`
+
+3. **Environment Variables**
+   - Add all required environment variables in Amplify console
+   - Ensure `NEXT_PUBLIC_APP_URL` matches your domain
+
+### Using EC2 + RDS
+
+1. **Set up RDS PostgreSQL**
+   \`\`\`bash
+   # Create RDS instance
+   aws rds create-db-instance \
+     --db-instance-identifier linkbird-prod \
+     --db-instance-class db.t3.micro \
+     --engine postgres \
+     --master-username admin \
+     --master-user-password your-password \
+     --allocated-storage 20
+   \`\`\`
+
+2. **Launch EC2 Instance**
+   \`\`\`bash
+   # User data script for EC2
+   #!/bin/bash
+   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+   sudo apt-get install -y nodejs
+   sudo npm install -g pm2
+   
+   # Clone and setup application
+   git clone https://github.com/yourusername/linkbird.git
+   cd linkbird
+   npm install
+   npm run build
+   
+   # Start with PM2
+   pm2 start npm --name "linkbird" -- start
+   pm2 startup
+   pm2 save
+   \`\`\`
+
+## Docker Deployment
+
+### 1. Create Dockerfile
+\`\`\`dockerfile
+FROM node:18-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+RUN npm run build
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+CMD ["node", "server.js"]
+\`\`\`
+
+### 2. Docker Compose
+\`\`\`yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/linkbird
+      - BETTER_AUTH_SECRET=your-secret-key
+      - GOOGLE_CLIENT_ID=your-client-id
+      - GOOGLE_CLIENT_SECRET=your-client-secret
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=linkbird
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
+\`\`\`
+
+### 3. Deploy
+\`\`\`bash
+# Build and run
+docker-compose up -d
+
+# View logs
+docker-compose logs -f app
+\`\`\`
+
+## Self-Hosted Deployment
+
+### 1. Server Setup (Ubuntu 22.04)
+\`\`\`bash
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Install PostgreSQL
+sudo apt install postgresql postgresql-contrib
+
+# Install Nginx
+sudo apt install nginx
+
+# Install PM2
+sudo npm install -g pm2
+\`\`\`
+
+### 2. Database Setup
+\`\`\`bash
+# Create database and user
+sudo -u postgres psql
+CREATE DATABASE linkbird;
+CREATE USER linkbird_user WITH PASSWORD 'secure_password';
+GRANT ALL PRIVILEGES ON DATABASE linkbird TO linkbird_user;
+\q
+
+# Run migrations
+psql -h localhost -U linkbird_user -d linkbird -f scripts/001-create-tables.sql
+\`\`\`
+
+### 3. Application Setup
+\`\`\`bash
+# Clone repository
+git clone https://github.com/yourusername/linkbird.git
+cd linkbird
+
+# Install dependencies
+npm install
+
+# Build application
+npm run build
+
+# Start with PM2
+pm2 start npm --name "linkbird" -- start
+pm2 startup
+pm2 save
+\`\`\`
+
+### 4. Nginx Configuration
+\`\`\`nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+\`\`\`
+
+### 5. SSL Certificate (Let's Encrypt)
+\`\`\`bash
+# Install Certbot
+sudo apt install certbot python3-certbot-nginx
+
+# Get certificate
+sudo certbot --nginx -d yourdomain.com
+
+# Auto-renewal
+sudo crontab -e
+# Add: 0 12 * * * /usr/bin/certbot renew --quiet
+\`\`\`
+
+## Post-Deployment Checklist
+
+### 1. Verify Deployment
+- [ ] Application loads correctly
+- [ ] Database connection works
+- [ ] Authentication functions
+- [ ] Google OAuth works
+- [ ] All pages render properly
+
+### 2. Performance Optimization
+- [ ] Enable gzip compression
+- [ ] Set up CDN for static assets
+- [ ] Configure database connection pooling
+- [ ] Set up monitoring and logging
+
+### 3. Security
+- [ ] HTTPS enabled
+- [ ] Security headers configured
+- [ ] Database access restricted
+- [ ] Environment variables secured
+- [ ] Regular backups scheduled
+
+### 4. Monitoring
+- [ ] Error tracking (Sentry)
+- [ ] Performance monitoring
+- [ ] Database monitoring
+- [ ] Uptime monitoring
+- [ ] Log aggregation
+
+## Troubleshooting
+
+### Common Issues
+
+**Build Failures**
+\`\`\`bash
+# Clear cache and rebuild
+rm -rf .next node_modules
+npm install
+npm run build
+\`\`\`
+
+**Database Connection Issues**
+\`\`\`bash
+# Test connection
+psql $DATABASE_URL -c "SELECT version();"
+
+# Check firewall rules
+sudo ufw status
+\`\`\`
+
+**Environment Variable Issues**
+\`\`\`bash
+# Verify variables are set
+printenv | grep -E "(DATABASE_URL|BETTER_AUTH_SECRET)"
+\`\`\`
+
+### Performance Issues
+- Enable database query logging
+- Use connection pooling
+- Implement Redis caching
+- Optimize database indexes
+- Use CDN for static assets
+
+### Scaling Considerations
+- Horizontal scaling with load balancer
+- Database read replicas
+- Redis for session storage
+- Queue system for background jobs
+- Microservices architecture for high load
